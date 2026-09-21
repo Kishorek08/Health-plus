@@ -1,16 +1,18 @@
-export type Language = 'en' | 'es' | 'fr';
+export type Language = 'EN' | 'TA' | 'HI' | 'ES' | 'FR' | 'en' | 'ta' | 'hi' | 'es' | 'fr';
 
 export interface Doctor {
   id: string;
   name: string;
-  specialization: string;
-  rating: number;
-  fee: number;
-  availableSlots: string[];
+  specialty: string;
+  experience?: string | number;
+  rating?: number;
+  image?: string;
+  availableSlots?: string[];
+  location?: string;
+  consultationFee?: number;
 }
 
 export interface PrescriptionItem {
-  id: string;
   medicineName: string;
   dosage: string;
   frequency: string;
@@ -19,31 +21,20 @@ export interface PrescriptionItem {
 
 export interface Prescription {
   id: string;
-  appointmentId: string;
-  doctorId: string;
-  doctorName: string;
-  patientId: string;
-  patientName: string;
   date: string;
-  diagnosis: string;
+  doctorName: string;
   items: PrescriptionItem[];
-  instructions?: string;
-  issuedAt: string;
 }
 
 export interface Appointment {
   id: string;
-  patientId: string;
   patientName: string;
-  doctorId: string;
   doctorName: string;
-  doctorSpecialty: string;
+  specialty?: string;
   date: string;
   time: string;
-  symptoms: string;
-  status: 'CONFIRMED' | 'COMPLETED' | 'CANCELLED';
+  status: 'CONFIRMED' | 'PENDING' | 'COMPLETED' | 'CANCELLED';
   queuePosition?: number;
-  estimatedWaitMins?: number;
-  attachedFile?: string;
+  estimatedWaitMinutes?: number;
   prescription?: Prescription;
 }

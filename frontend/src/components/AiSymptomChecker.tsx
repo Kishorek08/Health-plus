@@ -12,9 +12,9 @@ export const AiSymptomChecker = ({ onSelectSpecialty }: { onSelectSpecialty: (sp
 
     setTimeout(() => {
       const lower = symptoms.toLowerCase();
-      let res = {
+      let res: { specialty: string; urgency: 'Low' | 'Moderate' | 'High'; advice: string } = {
         specialty: 'General Medicine',
-        urgency: 'Low' as const,
+        urgency: 'Low',
         advice: 'Schedule a regular checkup with a General Practitioner.',
       };
 

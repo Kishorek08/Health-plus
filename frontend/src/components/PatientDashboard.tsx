@@ -1,16 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
-  Search, Calendar, Clock, Star, 
-  CheckCircle2, AlertCircle, UploadCloud, Pill, Bell, Check, Plus, X, ShieldCheck, Zap, Trash2, FileText, Lock, Download
+  Search, Calendar, Clock, ShieldCheck, Zap, Download, 
+  FileText, Pill, CheckCircle, Stethoscope, AlertCircle,
+  Bell, BellRing, Plus, Volume2, Check, X, Power
 } from 'lucide-react';
-import { Doctor, Appointment, Language } from './types';
+import { Doctor, Appointment, Language, PrescriptionItem } from '../types';
+import { translations } from '../translations';
 
-interface Medication {
+interface AlarmItem {
   id: string;
-  name: string;
+  medicineName: string;
   dosage: string;
   time: string;
+  enabled: boolean;
   takenToday: boolean;
+  doctorName?: string;
 }
 
 interface PatientDashboardProps {
@@ -25,155 +29,189 @@ interface PatientDashboardProps {
   setAppointments: React.Dispatch<React.SetStateAction<Appointment[]>>;
 }
 
-const COMMON_REASONS = [
-  'High Fever / Flu',
-  'Severe Headache / Migraine',
-  'Abdominal Pain',
-  'Chest Tightness',
-  'Skin Rash / Allergy',
-  'General Routine Checkup',
-];
-
 export const PatientDashboard: React.FC<PatientDashboardProps> = ({
   user,
+  language,
   doctors,
   appointments,
   setAppointments,
 }) => {
-  const [activeTab, setActiveTab] = useState<'EXPLORE' | 'MY_APPOINTMENTS' | 'MEDICATIONS' | 'VAULT'>('EXPLORE');
-  const [searchTerm, setSearchTerm] = useState('');
+  const langKey = (language ? String(language).toUpperCase() : 'EN') as keyof typeof translations;
+  const t = translations[langKey] || translations.EN;
+
+  const [activeTab, setActiveTab] = useState<'doctors' | 'appointments' | 'alarms' | 'vault'>('doctors');
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedSpecialty, setSelectedSpecialty] = useState('ALL');
-
-  // Booking Modal State
+  
+  // Booking modal state
   const [selectedDoctor, setSelectedDoctor] = useState<Doctor | null>(null);
-  const [bookingDate, setBookingDate] = useState(new Date().toISOString().split('T')[0]);
+  const [bookingDate, setBookingDate] = useState('');
   const [bookingTime, setBookingTime] = useState('10:00 AM');
-  const [selectedReasonTag, setSelectedReasonTag] = useState<string>('');
-  const [customSymptoms, setCustomSymptoms] = useState('');
-  const [attachedFileName, setAttachedFileName] = useState<string | null>(null);
-  const [bookingSuccess, setBookingSuccess] = useState(false);
-  const [bookingError, setBookingError] = useState<string | null>(null);
+  const [symptomsInput, setSymptomsInput] = useState('');
+  const [bookingSuccess, setBookingSuccess] = useState<string | null>(null);
 
-  // Notification Toast & Security Modal State
-  const [notificationToast, setNotificationToast] = useState<string | null>(null);
-  const [showHipaaModal, setShowHipaaModal] = useState(false);
+  // STRICT USER FILTERING
+  const userAppointments = appointments.filter(
+    (apt) => apt.patientId === user.id || apt.patientName?.toLowerCase() === user.name?.toLowerCase()
+  );
 
-  // Smart Medication Tracker State
-  const [medications, setMedications] = useState<Medication[]>([
-    { id: 'med_1', name: 'Paracetamol', dosage: '500mg', time: '08:00 AM', takenToday: true },
-    { id: 'med_2', name: 'Amoxicillin', dosage: '250mg', time: '02:00 PM', takenToday: false },
-    { id: 'med_3', name: 'Vitamin C', dosage: '1000mg', time: '08:00 PM', takenToday: false },
-  ]);
+  const userPrescriptions = userAppointments
+    .map((apt) => apt.prescription)
+    .filter(Boolean);
+
+  // MEDICATION ALARMS STATE
+  const [alarms, setAlarms] = useState<AlarmItem[]>([]);
+  const [showAddAlarmModal, setShowAddAlarmModal] = useState(false);
   const [newMedName, setNewMedName] = useState('');
-  const [newMedDosage, setNewMedDosage] = useState('');
-  const [newMedTime, setNewMedTime] = useState('09:00 AM');
+  const [newDosage, setNewDosage] = useState('');
+  const [newTime, setNewTime] = useState('08:00 AM');
+  const [ringingAlarm, setRingingAlarm] = useState<AlarmItem | null>(null);
 
-  // Medical Vault Documents
-  const [vaultFiles, setVaultFiles] = useState<string[]>([
-    'Annual_Checkup_LabResults_2025.pdf',
-    'Chest_XRay_Digital_Scan.png'
-  ]);
+  // Sync Alarms from User Prescriptions on mount or prescription updates
+  useEffect(() => {
+    const generatedAlarms: AlarmItem[] = [];
+    userPrescriptions.forEach((rx: any) => {
+      rx.items?.forEach((item: PrescriptionItem, idx: number) => {
+        generatedAlarms.push({
+          id: `rx_alarm_${rx.id}_${idx}`,
+          medicineName: item.medicineName,
+          dosage: item.dosage,
+          time: item.frequency.includes('Twice') ? '08:00 AM & 08:00 PM' : '08:00 AM',
+          enabled: true,
+          takenToday: false,
+          doctorName: rx.doctorName
+        });
+      });
+    });
 
-  const triggerNotification = (msg: string) => {
-    setNotificationToast(msg);
-    setTimeout(() => setNotificationToast(null), 5000);
-  };
+    // Merge with default sample alarm if none exist
+    if (generatedAlarms.length === 0) {
+      generatedAlarms.push({
+        id: 'default_alarm_1',
+        medicineName: 'Paracetamol',
+        dosage: '500mg',
+        time: '08:00 AM',
+        enabled: true,
+        takenToday: false,
+        doctorName: 'Dr. Robert Chen'
+      });
+    }
 
-  const handleInstantBooking = () => {
-    if (doctors.length > 0) {
-      setSelectedDoctor(doctors[0]);
-      setSelectedReasonTag('General Routine Checkup');
-      setBookingTime('Immediate Express Slot');
+    setAlarms(generatedAlarms);
+  }, [userAppointments.length]);
+
+  // Audio Beep Alert Generator (Using Web Audio API)
+  const playAlarmSound = () => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, audioCtx.currentTime); // A5 note
+      gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 1.2);
+    } catch (e) {
+      console.log('Audio playback error:', e);
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      setAttachedFileName(file.name);
-      if (!vaultFiles.includes(file.name)) {
-        setVaultFiles([...vaultFiles, file.name]);
-      }
-    }
+  const triggerTestAlarm = (alarm: AlarmItem) => {
+    setRingingAlarm(alarm);
+    playAlarmSound();
   };
 
-  const handleDeleteVaultFile = (fileName: string) => {
-    setVaultFiles(vaultFiles.filter((f) => f !== fileName));
-    triggerNotification(`📄 ${fileName} deleted from Medical Vault.`);
+  const toggleAlarmState = (id: string) => {
+    setAlarms(prev => prev.map(a => a.id === id ? { ...a, enabled: !a.enabled } : a));
   };
+
+  const toggleTakenState = (id: string) => {
+    setAlarms(prev => prev.map(a => a.id === id ? { ...a, takenToday: !a.takenToday } : a));
+  };
+
+  const handleAddCustomAlarm = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMedName) return;
+
+    const customAlarm: AlarmItem = {
+      id: `custom_alarm_${Date.now()}`,
+      medicineName: newMedName,
+      dosage: newDosage || '1 Tablet',
+      time: newTime,
+      enabled: true,
+      takenToday: false,
+      doctorName: 'Self Scheduled'
+    };
+
+    setAlarms([customAlarm, ...alarms]);
+    setNewMedName('');
+    setNewDosage('');
+    setShowAddAlarmModal(false);
+  };
+
+  // Specialties
+  const specialties = [
+    { key: 'ALL', label: t.allSpecialties || 'ALL' },
+    { key: 'Cardiology', label: t.cardiology || 'Cardiology' },
+    { key: 'Neurology', label: t.neurology || 'Neurology' },
+    { key: 'General Medicine', label: t.generalMedicine || 'General Medicine' },
+  ];
+
+  const filteredDoctors = doctors.filter((doc) => {
+    const matchesSearch = doc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      doc.specialty.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSpecialty = selectedSpecialty === 'ALL' || doc.specialty === selectedSpecialty;
+    return matchesSearch && matchesSpecialty;
+  });
 
   const handleBookAppointment = (e: React.FormEvent) => {
     e.preventDefault();
-    setBookingError(null);
+    if (!selectedDoctor || !bookingDate) return;
 
-    const finalReason = selectedReasonTag 
-      ? `${selectedReasonTag}${customSymptoms ? ` - ${customSymptoms}` : ''}`
-      : customSymptoms;
-
-    if (!finalReason) {
-      setBookingError('Please select or describe the reason for your visit.');
-      return;
-    }
-
-    const newApt: Appointment = {
+    const newAppointment: Appointment = {
       id: `apt_${Date.now()}`,
+      doctorId: selectedDoctor.id,
+      doctorName: selectedDoctor.name,
       patientId: user.id,
       patientName: user.name,
-      doctorId: selectedDoctor?.id || 'doc_1',
-      doctorName: selectedDoctor?.name || 'Dr. Assigned',
-      doctorSpecialty: selectedDoctor?.specialization || 'General Practitioner',
       date: bookingDate,
       time: bookingTime,
-      symptoms: finalReason,
       status: 'CONFIRMED',
-      queuePosition: Math.floor(Math.random() * 3) + 1,
-      estimatedWaitMins: 15,
-      attachedFile: attachedFileName || undefined,
+      specialty: selectedDoctor.specialty,
+      symptoms: symptomsInput || 'General Checkup',
     };
 
-    setAppointments([newApt, ...appointments]);
-    setBookingSuccess(true);
+    setAppointments((prev) => [newAppointment, ...prev]);
+    setBookingSuccess(`Appointment booked successfully with ${selectedDoctor.name}`);
+    setTimeout(() => setBookingSuccess(null), 4000);
 
-    triggerNotification(
-      `📲 Confirmation Notification Sent! Appointment confirmed with ${newApt.doctorName} for ${newApt.date} at ${newApt.time}.`
-    );
-
-    setTimeout(() => {
-      setSelectedDoctor(null);
-      setBookingSuccess(false);
-      setSelectedReasonTag('');
-      setCustomSymptoms('');
-      setAttachedFileName(null);
-    }, 1800);
+    setSelectedDoctor(null);
+    setBookingDate('');
+    setSymptomsInput('');
   };
 
-  const handleCancelAppointment = (id: string) => {
-    setAppointments(appointments.filter((apt) => apt.id !== id));
-    triggerNotification('❌ Appointment cancelled successfully.');
-  };
-
-  const handleDownloadPrescription = (apt: Appointment) => {
-    if (!apt.prescription) return;
-    const rx = apt.prescription;
+  const handleDownloadPrescription = (rx: any) => {
     const content = `
 ============================================================
               OFFICIAL MEDICAL PRESCRIPTION
 ============================================================
 Date: ${rx.date} | Rx ID: ${rx.id}
-Doctor: ${rx.doctorName} (${apt.doctorSpecialty})
+Doctor: ${rx.doctorName}
 Patient: ${rx.patientName}
 Diagnosis: ${rx.diagnosis}
 ------------------------------------------------------------
 PRESCRIBED MEDICATIONS:
-${rx.items.map((item, idx) => `${idx + 1}.${item.medicineName}
+${rx.items?.map((item: PrescriptionItem, idx: number) => `${idx + 1}.${item.medicineName}
    Dosage: ${item.dosage} | Frequency: ${item.frequency} \vert{} Duration:${item.duration}`).join('\n')}
 
 INSTRUCTIONS & NOTES:
-${rx.instructions || 'Take as directed by doctor.'}
+${rx.instructions || 'Take as directed.'}
 
 ------------------------------------------------------------
 Digitally Verified & Signed
-Healthcare Portal & Appointment System
+Healthcare Portal System
 ============================================================
 `;
 
@@ -181,254 +219,323 @@ Healthcare Portal & Appointment System
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `Prescription_${rx.patientName.replace(/\s+/g, '_')}_${rx.date}.txt`;
+    link.download = `Prescription_${rx.patientName}_${rx.date}.txt`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   };
 
-  const toggleMedication = (id: string) => {
-    setMedications(medications.map(m => m.id === id ? { ...m, takenToday: !m.takenToday } : m));
-  };
-
-  const addMedication = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMedName) return;
-    setMedications([
-      ...medications,
-      {
-        id: `med_${Date.now()}`,
-        name: newMedName,
-        dosage: newMedDosage || '1 Tablet',
-        time: newMedTime || '09:00 AM',
-        takenToday: false,
-      }
-    ]);
-    setNewMedName('');
-    setNewMedDosage('');
-  };
-
-  const deleteMedication = (id: string) => {
-    setMedications(medications.filter(m => m.id !== id));
-  };
-
-  const filteredDoctors = doctors.filter((doc) => {
-    const spec = doc.specialization || 'General Medicine';
-    const matchesSearch = doc.name.toLowerCase().includes(searchTerm.toLowerCase()) || spec.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesSpec = selectedSpecialty === 'ALL' || spec.toLowerCase() === selectedSpecialty.toLowerCase();
-    return matchesSearch && matchesSpec;
-  });
-
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-6">
 
-      {notificationToast && (
+      {/* SUCCESS TOAST */}
+      {bookingSuccess && (
         <div className="p-4 bg-emerald-600 text-white rounded-2xl shadow-lg flex items-center justify-between font-bold text-xs animate-bounce">
           <div className="flex items-center gap-2">
-            <Bell className="w-4 h-4 text-emerald-200" />
-            <span>{notificationToast}</span>
+            <CheckCircle className="w-4 h-4" />
+            <span>{bookingSuccess}</span>
           </div>
-          <button onClick={() => setNotificationToast(null)}>
-            <X className="w-4 h-4 text-white/80" />
-          </button>
         </div>
       )}
 
-      {/* TOP NAVIGATION HEADER */}
-      <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-extrabold text-slate-900">Welcome, {user.name}</h1>
-          <p className="text-xs text-slate-500 mt-0.5">Manage consultations, prescriptions, and health vault</p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2.5">
-          <button
-            onClick={() => setShowHipaaModal(true)}
-            className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
-          >
-            <ShieldCheck className="w-4 h-4 text-emerald-600" /> HIPAA Compliant
-          </button>
-
-          <button
-            onClick={handleInstantBooking}
-            className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
-          >
-            <Zap className="w-4 h-4 fill-current" /> Instant Express Booking
-          </button>
-
-          <div className="flex bg-slate-100 p-1 rounded-2xl">
+      {/* RINGING ALARM MODAL OVERLAY */}
+      {ringingAlarm && (
+        <div className="fixed inset-0 bg-red-900/80 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-pulse">
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl border-4 border-red-500">
+            <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto animate-bounce">
+              <BellRing className="w-8 h-8" />
+            </div>
+            <div>
+              <h3 className="text-lg font-black text-red-600">{t.alarmRingingTitle || "MEDICATION REMINDER!"}</h3>
+              <p className="text-xs text-slate-500 mt-1">{t.alarmRingingDesc || "It is time to take your prescribed medicine:"}</p>
+            </div>
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200">
+              <span className="font-extrabold text-slate-900 text-base block">{ringingAlarm.medicineName}</span>
+              <span className="text-xs text-blue-600 font-bold block">{ringingAlarm.dosage}</span>
+              <span className="text-[10px] text-slate-400 block mt-1">Prescribed by: {ringingAlarm.doctorName}</span>
+            </div>
             <button
-              onClick={() => setActiveTab('EXPLORE')}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                activeTab === 'EXPLORE' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600'
-              }`}
+              onClick={() => {
+                toggleTakenState(ringingAlarm.id);
+                setRingingAlarm(null);
+              }}
+              className="w-full py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-lg cursor-pointer transition-all"
             >
-              Find Doctors
-            </button>
-            <button
-              onClick={() => setActiveTab('MY_APPOINTMENTS')}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                activeTab === 'MY_APPOINTMENTS' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600'
-              }`}
-            >
-              Appointments ({appointments.length})
-            </button>
-            <button
-              onClick={() => setActiveTab('MEDICATIONS')}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                activeTab === 'MEDICATIONS' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600'
-              }`}
-            >
-              Med Alarms
-            </button>
-            <button
-              onClick={() => setActiveTab('VAULT')}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                activeTab === 'VAULT' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600'
-              }`}
-            >
-              Medical Vault
+              {t.snoozeDismiss || "Dismiss & Mark Taken"}
             </button>
           </div>
         </div>
+      )}
+
+      {/* HEADER SECTION */}
+      <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h1 className="text-2xl font-extrabold text-slate-900">
+            {t.welcome || "Welcome"}, <span className="text-blue-600">{user.name}</span>
+          </h1>
+          <p className="text-xs text-slate-500 mt-1">
+            {t.manageSubtitle || "Manage consultations, prescriptions, and health vault"}
+          </p>
+        </div>
+
+        {/* TABS & BADGES */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-xl border border-emerald-100">
+            <ShieldCheck className="w-4 h-4 text-emerald-600" />
+            {t.hipaaCompliant || "HIPAA Compliant"}
+          </span>
+          <span className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-700 text-xs font-bold rounded-xl border border-amber-100">
+            <Zap className="w-4 h-4 text-amber-500 fill-amber-500" />
+            {t.expressBooking || "Instant Express Booking"}
+          </span>
+        </div>
       </div>
 
-      {/* TAB 1: DOCTOR SEARCH */}
-      {activeTab === 'EXPLORE' && (
+      {/* NAVIGATION TABS */}
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-2 overflow-x-auto">
+        <button
+          onClick={() => setActiveTab('doctors')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeTab === 'doctors'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'bg-white text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          {t.findDoctors || "Find Doctors"}
+        </button>
+        <button
+          onClick={() => setActiveTab('appointments')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeTab === 'appointments'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'bg-white text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          {t.appointmentsTab || "Appointments"} ({userAppointments.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('alarms')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeTab === 'alarms'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'bg-white text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          {t.medAlarms || "Med Alarms"} ({alarms.filter(a => a.enabled).length})
+        </button>
+        <button
+          onClick={() => setActiveTab('vault')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeTab === 'vault'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'bg-white text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          {t.medicalVault || "Medical Vault"} ({userPrescriptions.length})
+        </button>
+      </div>
+
+      {/* TAB 1: FIND DOCTORS */}
+      {activeTab === 'doctors' && (
         <div className="space-y-6">
-          <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col md:flex-row gap-4">
+          <div className="flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
-              <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
+              <Search className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search by doctor name or specialization..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder={t.searchPlaceholder || "Search by doctor name or specialization..."}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-2xl text-xs outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
               />
             </div>
-            <div className="flex flex-wrap gap-2">
-              {['ALL', 'Cardiology', 'Neurology', 'General Medicine'].map((spec) => (
+            <div className="flex gap-2 overflow-x-auto pb-1 sm:pb-0">
+              {specialties.map((spec) => (
                 <button
-                  key={spec}
-                  onClick={() => setSelectedSpecialty(spec)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer ${
-                    selectedSpecialty === spec ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'
+                  key={spec.key}
+                  onClick={() => setSelectedSpecialty(spec.key)}
+                  className={`px-3.5 py-2.5 rounded-2xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    selectedSpecialty === spec.key
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
                   }`}
                 >
-                  {spec}
+                  {spec.label}
                 </button>
               ))}
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {filteredDoctors.map((doctor) => (
-              <div key={doctor.id} className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm flex flex-col justify-between space-y-4">
-                <div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredDoctors.map((doc) => {
+              const hasBooked = userAppointments.some((apt) => apt.doctorId === doc.id);
+              return (
+                <div
+                  key={doc.id}
+                  className="bg-white rounded-3xl border border-slate-100 p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between space-y-4"
+                >
                   <div className="flex items-start justify-between">
-                    <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 font-bold flex items-center justify-center text-lg">
-                      Dr
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 font-extrabold flex items-center justify-center text-lg">
+                        Dr
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-slate-900 text-sm">{doc.name}</h3>
+                        <p className="text-xs text-blue-600 font-medium">{doc.specialty}</p>
+                      </div>
                     </div>
-                    <span className="flex items-center gap-1 bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full text-xs font-bold border border-amber-200">
-                      <Star className="w-3 h-3 fill-amber-400 text-amber-400" /> {doctor.rating || 5.0}
+                    <span className="text-xs font-bold bg-amber-50 text-amber-700 px-2 py-0.5 rounded-lg border border-amber-100">
+                      ★ {doc.rating || 4.9}
                     </span>
                   </div>
-                  <h3 className="text-base font-bold text-slate-900 mt-3">{doctor.name}</h3>
-                  <p className="text-xs font-semibold text-blue-600">{doctor.specialization || 'General Medicine'}</p>
-                </div>
 
-                <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
-                  <div>
-                    <span className="text-[10px] text-slate-400 block">Fee</span>
-                    <span className="text-base font-bold text-slate-900">${doctor.fee || 50}</span>
+                  <div className="flex items-center justify-between border-t border-slate-100 pt-3">
+                    <div>
+                      <span className="text-[10px] text-slate-400 block">{t.fee || "Fee"}</span>
+                      <span className="font-extrabold text-slate-900 text-sm">${doc.fee || 80}</span>
+                    </div>
+
+                    <button
+                      onClick={() => setSelectedDoctor(doc)}
+                      disabled={hasBooked}
+                      className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                        hasBooked
+                          ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                          : 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm'
+                      }`}
+                    >
+                      <Calendar className="w-3.5 h-3.5" />
+                      {hasBooked ? (t.booked || "Booked") : (t.bookConsultation || "Book Consultation")}
+                    </button>
                   </div>
-                  <button
-                    onClick={() => setSelectedDoctor(doctor)}
-                    className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all cursor-pointer flex items-center gap-1"
-                  >
-                    <Calendar className="w-3.5 h-3.5" /> Book Consultation
-                  </button>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
 
-      {/* TAB 2: APPOINTMENTS & PRESCRIPTIONS */}
-      {activeTab === 'MY_APPOINTMENTS' && (
-        <div className="bg-white rounded-3xl border border-slate-100 p-6 shadow-sm space-y-6">
-          <h3 className="text-lg font-bold text-slate-900">My Scheduled Appointments & Prescriptions</h3>
+      {/* TAB 2: APPOINTMENTS */}
+      {activeTab === 'appointments' && (
+        <div className="bg-white rounded-3xl border border-slate-100 p-6 shadow-sm space-y-4">
+          <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+            <Calendar className="w-5 h-5 text-blue-600" />
+            {t.appointmentsTab || "Appointments"}
+          </h2>
 
-          {appointments.length === 0 ? (
-            <p className="text-xs text-slate-400 py-8 text-center">No appointments scheduled.</p>
+          {userAppointments.length === 0 ? (
+            <p className="text-xs text-slate-400 py-8 text-center">{t.noAppointmentsPatient || "No appointments scheduled yet."}</p>
           ) : (
             <div className="divide-y divide-slate-100">
-              {appointments.map((apt) => (
-                <div key={apt.id} className="py-5 space-y-4">
-                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <h4 className="font-bold text-slate-900 text-base">{apt.doctorName}</h4>
-                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                          apt.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
-                        }`}>
-                          {apt.status}
-                        </span>
+              {userAppointments.map((apt) => (
+                <div key={apt.id} className="py-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm">{apt.doctorName}</h4>
+                    <p className="text-xs text-slate-500">{apt.specialty}</p>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      {apt.date} at {apt.time}
+                    </p>
+                  </div>
+                  <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                    apt.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
+                  }`}>
+                    {apt.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 3: MED ALARMS (FULLY FUNCTIONAL) */}
+      {activeTab === 'alarms' && (
+        <div className="bg-white rounded-3xl border border-slate-100 p-6 shadow-sm space-y-6">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-100 pb-4">
+            <div>
+              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Bell className="w-5 h-5 text-blue-600" />
+                {t.medAlarmsTitle || "Medication Reminders & Alarms"}
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {t.activeAlarms || "Active Medication Alarms"} ({alarms.filter(a => a.enabled).length})
+              </p>
+            </div>
+
+            <button
+              onClick={() => setShowAddAlarmModal(true)}
+              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              {t.addCustomAlarm || "Add Custom Alarm"}
+            </button>
+          </div>
+
+          {alarms.length === 0 ? (
+            <div className="text-center py-10 space-y-2">
+              <Clock className="w-8 h-8 text-slate-300 mx-auto" />
+              <p className="text-xs text-slate-400">{t.noAlarmsFound || "No active alarms configured."}</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {alarms.map((alarm) => (
+                <div
+                  key={alarm.id}
+                  className={`p-5 rounded-2xl border transition-all flex flex-col justify-between space-y-3 ${
+                    alarm.enabled ? 'bg-white border-slate-200 shadow-sm' : 'bg-slate-50 border-slate-100 opacity-60'
+                  }`}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`p-3 rounded-xl ${alarm.enabled ? 'bg-blue-50 text-blue-600' : 'bg-slate-200 text-slate-500'}`}>
+                        <Pill className="w-5 h-5" />
                       </div>
-                      <p className="text-xs text-blue-600 font-semibold">{apt.doctorSpecialty}</p>
-                      
-                      <div className="p-2.5 bg-slate-50 rounded-xl text-xs text-slate-700 border border-slate-100">
-                        <strong>Reason:</strong> {apt.symptoms}
+                      <div>
+                        <h4 className="font-bold text-slate-900 text-sm">{alarm.medicineName}</h4>
+                        <span className="text-xs text-blue-600 font-bold block">{alarm.dosage}</span>
+                        {alarm.doctorName && (
+                          <span className="text-[10px] text-slate-400 block">{alarm.doctorName}</span>
+                        )}
                       </div>
-
-                      {/* PRESCRIPTION DETAILS & DOWNLOAD */}
-                      {apt.prescription ? (
-                        <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-2xl space-y-2 text-xs">
-                          <div className="flex items-center justify-between font-bold text-emerald-900">
-                            <span className="flex items-center gap-1.5">
-                              <Pill className="w-4 h-4 text-emerald-600" /> Digital Prescription Issued
-                            </span>
-                            <span className="text-[10px] text-emerald-700">Diagnosis: {apt.prescription.diagnosis}</span>
-                          </div>
-
-                          <div className="space-y-1 text-slate-700">
-                            <strong>Prescribed Medicines:</strong>
-                            <ul className="list-disc pl-4 text-[11px]">
-                              {apt.prescription.items.map((med) => (
-                                <li key={med.id}>
-                                  <strong>{med.medicineName}</strong> ({med.dosage}) - {med.frequency} for {med.duration}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-
-                          <button
-                            onClick={() => handleDownloadPrescription(apt)}
-                            className="mt-2 w-full sm:w-auto px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
-                          >
-                            <Download className="w-3.5 h-3.5" /> Download Official Prescription (.txt)
-                          </button>
-                        </div>
-                      ) : (
-                        <p className="text-[11px] text-amber-600 font-semibold flex items-center gap-1">
-                          <Clock className="w-3 h-3" /> Prescription pending doctor issuance.
-                        </p>
-                      )}
                     </div>
 
-                    <div className="text-right text-xs space-y-2">
-                      <div>
-                        <p className="font-bold text-slate-900">{apt.date}</p>
-                        <p className="text-slate-500">{apt.time}</p>
-                      </div>
+                    <button
+                      onClick={() => toggleAlarmState(alarm.id)}
+                      className={`p-2 rounded-xl transition-all cursor-pointer ${
+                        alarm.enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'
+                      }`}
+                      title="Toggle Alarm ON/OFF"
+                    >
+                      <Power className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between border-t border-slate-100 pt-3">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
+                      <Clock className="w-3.5 h-3.5 text-slate-400" />
+                      <span>{alarm.time}</span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
                       <button
-                        onClick={() => handleCancelAppointment(apt.id)}
-                        className="px-2.5 py-1 text-red-600 hover:bg-red-50 border border-red-200 rounded-lg text-[11px] font-semibold transition-all cursor-pointer"
+                        onClick={() => triggerTestAlarm(alarm)}
+                        className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl flex items-center gap-1 cursor-pointer transition-all"
                       >
-                        Cancel Appointment
+                        <Volume2 className="w-3.5 h-3.5 text-blue-600" />
+                        {t.testAlarm || "Test Ring"}
+                      </button>
+
+                      <button
+                        onClick={() => toggleTakenState(alarm.id)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer transition-all ${
+                          alarm.takenToday
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200'
+                        }`}
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        {alarm.takenToday ? (t.taken || "Taken Today") : (t.markTaken || "Mark Taken")}
                       </button>
                     </div>
                   </div>
@@ -439,144 +546,127 @@ Healthcare Portal & Appointment System
         </div>
       )}
 
-      {/* TAB 3: MEDICATION ALARMS */}
-      {activeTab === 'MEDICATIONS' && (
-        <div className="bg-white rounded-3xl border border-slate-100 p-6 shadow-sm space-y-6">
-          <div>
-            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <Pill className="w-5 h-5 text-blue-600" /> Daily Prescription Alarms
-            </h3>
-            <p className="text-xs text-slate-500">Track daily dosages and check off taken medicine</p>
-          </div>
+      {/* TAB 4: MEDICAL VAULT */}
+      {activeTab === 'vault' && (
+        <div className="bg-white rounded-3xl border border-slate-100 p-6 shadow-sm space-y-4">
+          <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+            <FileText className="w-5 h-5 text-blue-600" />
+            {t.prescriptionsList || "My Medical Prescriptions"}
+          </h2>
 
-          <form onSubmit={addMedication} className="flex flex-col sm:flex-row gap-2">
-            <input
-              type="text"
-              placeholder="Medication Name"
-              value={newMedName}
-              onChange={(e) => setNewMedName(e.target.value)}
-              className="flex-1 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <input
-              type="text"
-              placeholder="Dosage (e.g. 500mg)"
-              value={newMedDosage}
-              onChange={(e) => setNewMedDosage(e.target.value)}
-              className="w-full sm:w-32 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <input
-              type="text"
-              placeholder="Time (e.g. 09:00 AM)"
-              value={newMedTime}
-              onChange={(e) => setNewMedTime(e.target.value)}
-              className="w-full sm:w-32 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <button type="submit" className="px-4 py-2.5 bg-blue-600 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 cursor-pointer">
-              <Plus className="w-4 h-4" /> Add
-            </button>
-          </form>
+          {userPrescriptions.length === 0 ? (
+            <div className="text-center py-10 space-y-2">
+              <AlertCircle className="w-8 h-8 text-slate-300 mx-auto" />
+              <p className="text-xs text-slate-400">{t.noPrescriptions || "No prescriptions found for your account."}</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {userPrescriptions.map((rx: any) => (
+                <div key={rx.id} className="p-5 border border-slate-100 rounded-2xl bg-slate-50/50 space-y-3">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                    <div>
+                      <span className="font-bold text-slate-900 text-sm">{rx.doctorName}</span>
+                      <span className="text-[10px] text-slate-400 block">{rx.date}</span>
+                    </div>
+                    <button
+                      onClick={() => handleDownloadPrescription(rx)}
+                      className="px-3 py-1.5 bg-blue-600 text-white rounded-xl text-xs font-bold flex items-center gap-1 hover:bg-blue-700 cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      {t.downloadPrescription || "Download"}
+                    </button>
+                  </div>
 
-          <div className="space-y-3">
-            {medications.map((med) => (
-              <div key={med.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => toggleMedication(med.id)}
-                    className={`w-6 h-6 rounded-lg flex items-center justify-center transition-all cursor-pointer ${
-                      med.takenToday ? 'bg-emerald-500 text-white' : 'border-2 border-slate-300'
-                    }`}
-                  >
-                    {med.takenToday && <Check className="w-4 h-4" />}
-                  </button>
                   <div>
-                    <h4 className={`text-xs font-bold ${med.takenToday ? 'line-through text-slate-400' : 'text-slate-900'}`}>
-                      {med.name} ({med.dosage})
-                    </h4>
-                    <p className="text-[10px] text-slate-400 flex items-center gap-1">
-                      <Clock className="w-3 h-3" /> Scheduled for {med.time}
-                    </p>
+                    <span className="text-[11px] font-bold text-slate-700 block">{t.diagnosis || "Diagnosis"}:</span>
+                    <p className="text-xs text-slate-600">{rx.diagnosis}</p>
+                  </div>
+
+                  <div>
+                    <span className="text-[11px] font-bold text-slate-700 block mb-1">{t.medications || "Medications"}:</span>
+                    <ul className="space-y-1">
+                      {rx.items?.map((med: PrescriptionItem, idx: number) => (
+                        <li key={idx} className="text-xs text-slate-700 flex items-center gap-1.5">
+                          <Pill className="w-3 h-3 text-blue-500" />
+                          <span className="font-semibold">{med.medicineName}</span> - {med.dosage} ({med.frequency})
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => deleteMedication(med.id)}
-                    className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg transition-colors cursor-pointer"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
-      {/* TAB 4: MEDICAL VAULT */}
-      {activeTab === 'VAULT' && (
-        <div className="bg-white rounded-3xl border border-slate-100 p-6 shadow-sm space-y-6">
-          <div>
-            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <UploadCloud className="w-5 h-5 text-blue-600" /> Patient Medical Vault
-            </h3>
-            <p className="text-xs text-slate-500">Encrypted blood test reports, X-rays, and prescription history</p>
-          </div>
-
-          <label className="border-2 border-dashed border-blue-200 bg-blue-50/50 hover:bg-blue-50 rounded-3xl p-8 flex flex-col items-center justify-center cursor-pointer transition-all">
-            <UploadCloud className="w-10 h-10 text-blue-500 mb-2" />
-            <span className="text-xs font-bold text-slate-800">Click to upload Lab Test Reports or X-Rays</span>
-            <span className="text-[10px] text-slate-400 mt-1">Supports PDF, PNG, JPG (HIPAA Encrypted)</span>
-            <input type="file" onChange={handleFileUpload} className="hidden" />
-          </label>
-
-          <div className="space-y-2">
-            <h4 className="text-xs font-bold text-slate-700">Uploaded Records:</h4>
-            {vaultFiles.map((file, idx) => (
-              <div key={idx} className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between text-xs">
-                <span className="font-medium text-slate-800 flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-blue-600" /> {file}
-                </span>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md flex items-center gap-1">
-                    <Lock className="w-3 h-3" /> HIPAA Protected
-                  </span>
-                  <button
-                    onClick={() => handleDeleteVaultFile(file)}
-                    className="p-1 text-slate-400 hover:text-red-600 rounded transition-colors"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* HIPAA COMPLIANCE MODAL */}
-      {showHipaaModal && (
+      {/* ADD CUSTOM ALARM MODAL */}
+      {showAddAlarmModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-100 space-y-4">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-100 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="w-6 h-6 text-emerald-600" />
-                <h3 className="text-base font-bold text-slate-900">HIPAA Security Standard</h3>
-              </div>
-              <button onClick={() => setShowHipaaModal(false)} className="text-slate-400 hover:text-slate-600">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Bell className="w-5 h-5 text-blue-600" />
+                {t.addCustomAlarm || "Add Custom Alarm"}
+              </h3>
+              <button onClick={() => setShowAddAlarmModal(false)} className="text-slate-400 hover:text-slate-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <p className="text-xs text-slate-600 leading-relaxed">
-              All electronic protected health information (ePHI) including digital prescriptions, appointment records, and medical files are end-to-end encrypted with AES-256 protocols.
-            </p>
+            <form onSubmit={handleAddCustomAlarm} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">{t.medicineName || "Medicine Name"} *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Amoxicillin"
+                  value={newMedName}
+                  onChange={(e) => setNewMedName(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none"
+                />
+              </div>
 
-            <button
-              onClick={() => setShowHipaaModal(false)}
-              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
-            >
-              Understand & Close
-            </button>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">{t.dosage || "Dosage"}</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 250mg or 1 Tablet"
+                  value={newDosage}
+                  onChange={(e) => setNewDosage(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">{t.alarmTime || "Alarm Time"}</label>
+                <select
+                  value={newTime}
+                  onChange={(e) => setNewTime(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none"
+                >
+                  <option value="08:00 AM">08:00 AM (Morning)</option>
+                  <option value="02:00 PM">02:00 PM (Afternoon)</option>
+                  <option value="08:00 PM">08:00 PM (Night)</option>
+                </select>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddAlarmModal(false)}
+                  className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-xl text-xs font-semibold cursor-pointer"
+                >
+                  {t.close || "Cancel"}
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-sm cursor-pointer"
+                >
+                  {t.saveAlarm || "Save Alarm"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -585,98 +675,64 @@ Healthcare Portal & Appointment System
       {selectedDoctor && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-100 space-y-4">
-            {bookingSuccess ? (
-              <div className="py-8 text-center space-y-3">
-                <CheckCircle2 className="w-14 h-14 text-emerald-500 mx-auto animate-bounce" />
-                <h3 className="text-lg font-bold text-slate-900">Appointment Scheduled!</h3>
-                <p className="text-xs text-slate-500">Your doctor will review symptoms prior to consultation.</p>
+            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <Stethoscope className="w-5 h-5 text-blue-600" />
+              {t.bookConsultation || "Book Consultation"} - {selectedDoctor.name}
+            </h3>
+
+            <form onSubmit={handleBookAppointment} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">{t.selectDate || "Select Date"}</label>
+                <input
+                  type="date"
+                  required
+                  value={bookingDate}
+                  onChange={(e) => setBookingDate(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none"
+                />
               </div>
-            ) : (
-              <form onSubmit={handleBookAppointment} className="space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <h3 className="text-base font-bold text-slate-900">Book with {selectedDoctor.name}</h3>
-                  <button type="button" onClick={() => setSelectedDoctor(null)} className="text-slate-400 hover:text-slate-600">
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
 
-                {bookingError && (
-                  <div className="p-3 bg-red-50 text-red-600 text-xs rounded-xl flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0" /> {bookingError}
-                  </div>
-                )}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">{t.selectTime || "Select Time"}</label>
+                <select
+                  value={bookingTime}
+                  onChange={(e) => setBookingTime(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none"
+                >
+                  <option value="09:00 AM">09:00 AM</option>
+                  <option value="10:00 AM">10:00 AM</option>
+                  <option value="02:00 PM">02:00 PM</option>
+                  <option value="04:00 PM">04:00 PM</option>
+                </select>
+              </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-800 mb-1.5">
-                    Select Medical Reason *
-                  </label>
-                  <div className="flex flex-wrap gap-1.5 mb-2">
-                    {COMMON_REASONS.map((reason) => (
-                      <button
-                        key={reason}
-                        type="button"
-                        onClick={() => setSelectedReasonTag(reason)}
-                        className={`px-2.5 py-1 rounded-xl text-[11px] font-medium transition-all cursor-pointer ${
-                          selectedReasonTag === reason ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700'
-                        }`}
-                      >
-                        {reason}
-                      </button>
-                    ))}
-                  </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">{t.symptoms || "Describe Symptoms"}</label>
+                <textarea
+                  rows={2}
+                  value={symptomsInput}
+                  onChange={(e) => setSymptomsInput(e.target.value)}
+                  placeholder="e.g. Mild headache, fever"
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none"
+                />
+              </div>
 
-                  <textarea
-                    rows={2}
-                    placeholder="Describe specific symptoms..."
-                    value={customSymptoms}
-                    onChange={(e) => setCustomSymptoms(e.target.value)}
-                    className="w-full p-2.5 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">Date</label>
-                    <input
-                      type="date"
-                      required
-                      value={bookingDate}
-                      onChange={(e) => setBookingDate(e.target.value)}
-                      className="w-full p-2 border border-slate-200 rounded-xl text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">Time Slot</label>
-                    <select
-                      value={bookingTime}
-                      onChange={(e) => setBookingTime(e.target.value)}
-                      className="w-full p-2 border border-slate-200 rounded-xl text-xs bg-white"
-                    >
-                      <option value="Immediate Express Slot">Immediate Express Slot</option>
-                      <option value="10:00 AM">10:00 AM</option>
-                      <option value="01:30 PM">01:30 PM</option>
-                      <option value="04:00 PM">04:00 PM</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="flex gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedDoctor(null)}
-                    className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-xl text-xs font-semibold"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl text-xs font-semibold shadow-sm cursor-pointer"
-                  >
-                    Confirm Booking
-                  </button>
-                </div>
-              </form>
-            )}
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedDoctor(null)}
+                  className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-xl text-xs font-semibold cursor-pointer"
+                >
+                  {t.close || "Close"}
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-sm cursor-pointer"
+                >
+                  {t.confirmBooking || "Confirm Booking"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
