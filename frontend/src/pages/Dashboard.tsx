@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../api/apiClient';
-import { Calendar, User, Clock } from 'lucide-react';
+import { Calendar, Clock } from 'lucide-react';
 
 export default function Dashboard() {
   const { user, logout } = useAuth();

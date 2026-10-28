@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Mail, Lock, User, Stethoscope, ShieldCheck, Calendar, ArrowRight, AlertCircle } from 'lucide-react';
-import { translations, Language } from '../translations';
+import { Language } from '../types';
 
 export interface UserData {
   id: string;
@@ -15,7 +15,7 @@ interface LoginProps {
   language?: Language;
 }
 
-export const Login: React.FC<LoginProps> = ({ onLoginSuccess, language = 'EN' }) => {
+export const Login: React.FC<LoginProps> = ({ onLoginSuccess, language: _language = 'en' }) => {
   const [isRegistering, setIsRegistering] = useState(false);
   const [role, setRole] = useState<'PATIENT' | 'DOCTOR'>('PATIENT');
   const [loading, setLoading] = useState(false);
@@ -28,7 +28,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess, language = 'EN' })
     specialization: '',
   });
 
-  const t = translations[language] || {};
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -240,11 +240,11 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess, language = 'EN' })
         <div className="mt-6 pt-5 border-t border-slate-100 flex justify-between items-center text-[11px] text-slate-500 font-medium">
           <span className="flex items-center gap-1">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-            {t.hipaaCompliant || 'HIPAA Compliant'}
+            HIPAA Compliant
           </span>
           <span className="flex items-center gap-1">
             <Calendar className="w-3.5 h-3.5 text-blue-500" />
-            {t.instantBooking || 'Instant Booking'}
+            Instant Booking
           </span>
         </div>
       </div>

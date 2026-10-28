@@ -44,13 +44,6 @@ router.post('/register', async (req, res) => {
   }
 });
 
-    const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
-    res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to register user' });
-  }
-});
-
 // Login User
 router.post('/login', async (req, res) => {
   try {

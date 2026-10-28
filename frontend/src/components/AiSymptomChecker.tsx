@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Bot, Sparkles, AlertTriangle, ArrowRight } from 'lucide-react';
+import { useState } from 'react';
+import { Bot, Sparkles, ArrowRight } from 'lucide-react';
 
 export const AiSymptomChecker = ({ onSelectSpecialty }: { onSelectSpecialty: (spec: string) => void }) => {
   const [symptoms, setSymptoms] = useState('');
